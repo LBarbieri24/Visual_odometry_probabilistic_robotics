@@ -1,0 +1,13 @@
+# Build artifacts
+build/
+bin/
+lib/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project specific
+theorical_insights.md

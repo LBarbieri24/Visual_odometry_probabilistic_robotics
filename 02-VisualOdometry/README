@@ -1,0 +1,60 @@
+We provided, though, a ready to use dataset. It is composed by the following files:
+
+- world.dat (this needs to be used only for evaluation)
+  It contains information about the map.
+  Every row contains:
+   LANDMARK_ID (1) POSITION (2:4) APPEARANCE (5:)
+
+- camera.dat
+  It contains information about the camera used to gather data:
+  - camera matrix
+  - cam_transform: pose of the camera w.r.t. robot (ignore for VO)
+  - z_near/z_far how close/far the camera can perceive stuff
+  - width/height of images
+
+- trajectory.dat (this GT needs to be used only for evaluation, you don't need noisy odometry for this project)
+  POSE_ID (1) ODOMETRY_POSE (2:4) GROUNDTRUTH_POSE (5:7)
+  
+- meas-XXXX.dat
+  Every measurement contains a sequence number, groundtruth (of the robot) and odometry pose and measurement information:
+  - point POINT_ID_CURRENT_MESUREMENT (1) ACTUAL_POINT_ID (2) IMAGE_POINT (3:4) APPEARANCE (5:)
+
+  The Image_Point represents the pair [col;row] where the landmark is observed in the image
+  The Appearance is represented by a Vector of 10 float numbers. Can be used to perform data association.
+  Exausistive search (comparing all of them against all of them) is an easy and complete approach (completely inefficient, but we won't mark based on efficiency).
+  If you came up with a smarter idea to accomplish this comparison that would be nice anyway :) 
+  
+=====================================================================================================================
+ 
+What we expect you to do in Visual Odometry?
+- initialization, get first two images features and find an initial estimate and an initial set of world points
+- triangulate and track (projective icp, i.e. last image features, with associated set of world points reprojected into the image)
+
+
+Evaluation of your poses:
+Evaluate your solution comparing it with the gt using the delta between poses
+
+For example, suppose we these two consecutive poses
+T_0
+T_1 
+
+- compute the relative motion rel_T = inv(T_0)*T_1
+- augment the groundtruth to SE(3) transformation matrix (since your estimate is SE(3) but the gt is planar)
+- compute the relative gt motion rel_GT = inv(GT_0)*GT_1
+- compute the SE(3) error error_T = inv(rel_T)*rel_GT
+- rotation part:
+	- trace(eye(3)-error_T(1:3, 1:3))
+- translation part
+	- this will be up to scale so compute norms
+	- norm(rel_T(1:3, 4))/norm(rel_GT(1:3, 4))
+	- check that this ratio is consistent over all poses
+
+Evaluation of your map:
+- your estimate map is up to scale
+- use the ratio previously estimated to scale your points 
+- compute the whole RMSE   
+
+HINTS:
+- develop each component indipendelty and use the groudtruth for testing
+- when everything is working put all together and create your VO
+

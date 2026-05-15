@@ -1,0 +1,9 @@
+# Visual Odometry Project Dependencies
+
+# Core Build Tools
+cmake>=3.10
+build-essential
+
+# Libraries
+eigen3
+cpp-standard=17
