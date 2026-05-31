@@ -14,6 +14,7 @@ add_executable(vo_main
     src/data_loader.cpp 
     src/matcher.cpp 
     src/epipolar.cpp
+    src/triangulation.cpp
 )
 
 target_link_libraries(vo_main Eigen3::Eigen)

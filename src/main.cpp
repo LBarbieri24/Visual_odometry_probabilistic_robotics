@@ -3,6 +3,7 @@
 #include "vo/data_loader.h"
 #include "vo/matcher.h"
 #include "vo/epipolar.h"
+#include "vo/triangulation.h"
 
 int main() {
     using namespace vo;
@@ -69,10 +70,19 @@ int main() {
 
     Eigen::Matrix4f T0 = toSE3(f0.gt_pose);
     Eigen::Matrix4f T1 = toSE3(f1.gt_pose);
-    Eigen::Matrix4f rel_GT = T0.inverse() * T1;
+    Eigen::Matrix4f rel_GT_robot = T0.inverse() * T1;
 
-    std::cout << "\nGround Truth Relative Rotation:\n" << rel_GT.block<3, 3>(0, 0) << std::endl;
-    std::cout << "Ground Truth Relative Translation:\n" << rel_GT.block<3, 1>(0, 3).transpose() << std::endl;
+    // Transform relative ground truth motion to the camera frame
+    Eigen::Matrix4f cam_transform = cam.cam_transform;
+    Eigen::Matrix4f rel_GT = cam_transform.inverse() * rel_GT_robot * cam_transform;
+
+    std::cout << "\nGround Truth Relative Rotation (Camera Frame):\n" << rel_GT.block<3, 3>(0, 0) << std::endl;
+    std::cout << "Ground Truth Relative Translation (Camera Frame):\n" << rel_GT.block<3, 1>(0, 3).transpose() << std::endl;
+
+    // Estimate relative pose SE(3) matrix:
+    Eigen::Matrix4f rel_T = Eigen::Matrix4f::Identity();
+    rel_T.block<3, 3>(0, 0) = R;
+    rel_T.block<3, 1>(0, 3) = t;
 
     // Evaluation as per README
     // 1. Translation Norm Ratio
@@ -81,10 +91,75 @@ int main() {
     std::cout << "\n--- Evaluation (as per README) ---" << std::endl;
     std::cout << "Translation Norm Ratio (Scale): " << t_est_norm / t_gt_norm << std::endl;
 
-    // 2. Rotation Error (Trace)
-    // Note: This might be high if axes are swapped, but follows the 'ignore cam_transform' rule.
-    float rot_error = (Eigen::Matrix3f::Identity() - R.transpose() * rel_GT.block<3, 3>(0, 0)).trace();
+    // 2. Rotation Error (Trace of (Identity - inv(rel_T) * rel_GT))
+    Eigen::Matrix4f error_T = rel_T.inverse() * rel_GT;
+    float rot_error = (Eigen::Matrix3f::Identity() - error_T.block<3, 3>(0, 0)).trace();
     std::cout << "Rotation Error (Trace): " << rot_error << std::endl;
+
+    // Load ground truth map points
+    auto gt_map = DataLoader::loadWorld("02-VisualOdometry/data/world.dat");
+
+    float scale_factor = t_gt_norm / t_est_norm;
+    double sum_sq_err = 0.0;
+    int count = 0;
+
+    std::cout << "\n--- Triangulation & Map Evaluation ---" << std::endl;
+
+    for (int idx : inliers) {
+        const auto& m = matches[idx];
+        int landmark_id = f0.points[m.query_idx].actual_id;
+
+        if (gt_map.find(landmark_id) == gt_map.end()) continue;
+
+        // Prepare observations for DLT
+        vo::Observation obs0;
+        obs0.R = Eigen::Matrix3f::Identity();
+        obs0.t = Eigen::Vector3f::Zero();
+        obs0.uv = f0.points[m.query_idx].uv;
+
+        vo::Observation obs1;
+        obs1.R = R;
+        obs1.t = t;
+        obs1.uv = f1.points[m.train_idx].uv;
+
+        std::vector<vo::Observation> obs = {obs0, obs1};
+
+        // 1. DLT Triangulation
+        Eigen::Vector3f X_dlt = vo::Triangulation::triangulateDLT(obs, cam.K);
+
+        // 2. Gauss-Newton Refinement
+        Eigen::Vector3f X_refined = vo::Triangulation::refineGaussNewton(X_dlt, obs, cam.K);
+
+        // 3. Metric scaling
+        Eigen::Vector3f X_scaled = scale_factor * X_refined;
+
+        // 4. Ground Truth mapping
+        Eigen::Vector3f X_gt_global = gt_map[landmark_id];
+        Eigen::Vector4f X_gt_global_h(X_gt_global.x(), X_gt_global.y(), X_gt_global.z(), 1.0f);
+        Eigen::Matrix4f T_robot_to_cam0 = cam.cam_transform.inverse() * T0.inverse();
+        Eigen::Vector3f X_gt_cam0 = (T_robot_to_cam0 * X_gt_global_h).head<3>();
+
+        float err = (X_scaled - X_gt_cam0).norm();
+        sum_sq_err += err * err;
+        count++;
+        
+        // Print first 5 points for sanity check
+        if (count <= 5) {
+            std::cout << "Landmark " << landmark_id << ":\n"
+                      << "  GT Cam0:    " << X_gt_cam0.transpose() << "\n"
+                      << "  DLT Scaled: " << (scale_factor * X_dlt).transpose() << "\n"
+                      << "  Refined:    " << X_scaled.transpose() << "\n"
+                      << "  Error (m):  " << err << std::endl;
+        }
+    }
+
+    if (count > 0) {
+        double rmse = std::sqrt(sum_sq_err / count);
+        std::cout << "\nTriangulated Points Evaluated: " << count << std::endl;
+        std::cout << "Mean Reprojection/Triangulation RMSE: " << rmse << " meters" << std::endl;
+    } else {
+        std::cout << "No matching ground truth landmarks found for inliers!" << std::endl;
+    }
 
     return 0;
 }

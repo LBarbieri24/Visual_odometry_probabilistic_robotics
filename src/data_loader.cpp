@@ -14,8 +14,12 @@ CameraParams DataLoader::loadCamera(const std::string& filename) {
         if (line.find("camera matrix:") != std::string::npos) {
             for (int i = 0; i < 3; ++i) {
                 file >> params.K(i, 0) >> params.K(i, 1) >> params.K(i, 2);
-        } 
-        }else if (line.find("z_near:") != std::string::npos) {
+            } 
+        } else if (line.find("cam_transform:") != std::string::npos) {
+            for (int i = 0; i < 4; ++i) {
+                file >> params.cam_transform(i, 0) >> params.cam_transform(i, 1) >> params.cam_transform(i, 2) >> params.cam_transform(i, 3);
+            }
+        } else if (line.find("z_near:") != std::string::npos) {
             params.z_near = std::stof(line.substr(line.find(":") + 1));
         } else if (line.find("z_far:") != std::string::npos) {
             params.z_far = std::stof(line.substr(line.find(":") + 1));
@@ -56,6 +60,26 @@ Frame DataLoader::loadFrame(const std::string& filename) {
         }
     }
     return frame;
+}
+
+std::unordered_map<int, Eigen::Vector3f> DataLoader::loadWorld(const std::string& filename) {
+    std::unordered_map<int, Eigen::Vector3f> world;
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open world file: " << filename << std::endl;
+        return world;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        std::stringstream ss(line);
+        int id;
+        float x, y, z;
+        if (ss >> id >> x >> y >> z) {
+            world[id] = Eigen::Vector3f(x, y, z);
+        }
+    }
+    return world;
 }
 
 } // namespace vo
