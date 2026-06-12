@@ -15,6 +15,7 @@ add_executable(vo_main
     src/matcher.cpp 
     src/epipolar.cpp
     src/triangulation.cpp
+    src/tracking.cpp
 )
 
 target_link_libraries(vo_main Eigen3::Eigen)
