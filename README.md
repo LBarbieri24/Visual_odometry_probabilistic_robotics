@@ -4,6 +4,17 @@ Implementation of a monocular visual odometry pipeline for the Probabilistic Rob
 
 ---
 
+## Build
+
+**Dependency:** [Eigen3](https://eigen.tuxfamily.org) — `sudo apt install libeigen3-dev`
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
+```
+
+---
+
 ## Phase 1: Initialization & Epipolar Geometry
 
 Initialization from the first two frames using epipolar geometry.
