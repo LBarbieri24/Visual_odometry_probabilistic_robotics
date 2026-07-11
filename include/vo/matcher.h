@@ -13,7 +13,13 @@ struct Match {
 
 class Matcher {
 public:
-    static std::vector<Match> matchFrames(const Frame& f1, const Frame& f2, float threshold = 0.5f);
+    // threshold:       max absolute descriptor distance (Gating)
+    // ratio_threshold: max ratio best/second-best (Lonely Best Friends)
+    // Cross-check (Best Friends) is always applied internally.
+    static std::vector<Match> matchFrames(
+        const Frame& f1, const Frame& f2,
+        float threshold = 0.5f,
+        float ratio_threshold = 0.8f);
 };
 
 } // namespace vo

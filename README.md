@@ -1,45 +1,56 @@
-# Visual Odometry (Probabilistic Robotics)
+# Visual Odometry — Probabilistic Robotics
 
-In this repo will be stored the code for the probabilistic robotics project on odometry retrieval through image inputs.
+Implementation of a monocular visual odometry pipeline for the Probabilistic Robotics course project.
 
-
+---
 
 ## Phase 1: Initialization & Epipolar Geometry
 
-The first phase implements the initialization of the visual odometry pipeline using two-frame epipolar geometry.
+Initialization from the first two frames using epipolar geometry.
 
-### Key Features
-*   **Exhaustive Feature Matching:** Implemented a brute force matcher that takes every point in Frame 1 and compares it against every single point in Frame 2. Since it's computationally inefficient I'll try to find a better solution in the future. 
-*   **Robust Essential Matrix Estimation:** Implementation of the 8-point algorithm wrapped in a **RANSAC** loop to handle outliers and compute a reliable Essential Matrix.
-*   **SVD Motion Decomposition:** Performs Singular Value Decomposition ($\mathbf{E} = \mathbf{U}\mathbf{\Sigma}\mathbf{V}^T$) to extract the 4 possible rotation/translation combinations, resolving chirality using 3D point projection tests.
-*   **Scale Ambiguity Handling:** Establishes a relative coordinate system by normalizing the initial baseline translation vector ($\mathbf{t}$) to unit length.
-
----
-
-## Phase 2: 3D Point Triangulation & Non-Linear Least Squares Optimization
-
-The second phase reconstructs the 3D map coordinates of the tracked features in the environment and refines them using non-linear least squares optimization.
-
-### Key Features
-*   **Linear DLT Triangulation:** Implemented a Direct Linear Transform ($SVD$-based) solver that stacks projection equations from both cameras to compute the initial 3D positions of the inliers.
-*   **Gauss-Newton Reprojection Refinement:** Formulated a robust local optimizer that minimizes the physical 2D reprojection error in pixel coordinates. This includes analytical computing of the reprojection Jacobians w.r.t the 3D landmark positions.
-*   **Scale-Restored Evaluation:** Recovered metric scales using the translation baseline scale factor derived during Epipolar analysis.
-*   **Rigorous Map Validation:** Projects the absolute ground truth landmarks from `world.dat` into the camera's local coordinate frame:
-    $$\mathbf{X}_{gt}^{cam0} = (\mathbf{T}_C^R)^{-1} (\mathbf{T}_0)^{-1} \mathbf{X}_{gt}^{world}$$
-    and compares them directly against our triangulated coordinates.
+- **Feature matching:** brute-force appearance-based matcher with Lowe's ratio test and mutual cross-check to reduce false correspondences.
+- **Essential matrix estimation:** 8-point algorithm inside a RANSAC loop to reject outliers.
+- **Motion decomposition:** SVD of the Essential Matrix gives 4 candidate (R, t) pairs; chirality test selects the correct one.
+- **Scale:** translation is normalized to unit length since monocular VO cannot recover metric scale from two views alone.
 
 ---
 
-## Phase 3: Visual Odometry Tracking & Sequence Evaluation
+## Phase 2: Triangulation & Map Initialization
 
-The third phase implements the complete frame-to-frame visual odometry tracking loop using PnP pose estimation, dynamic map expansion, and trajectory evaluation.
+3D landmark positions are reconstructed from the two initialization frames.
 
-### Key Features
-*   **Frame-to-Frame PnP Pose Tracking:** Estimates the camera pose of the current frame $\mathbf{T}_k$ by establishing 3D-to-2D correspondences between the existing 3D map points and the new frame's 2D feature observations.
-*   **Huber-Weighted Non-Linear Optimization:** Uses a robust Huber loss function inside the Gauss-Newton optimization step to weight reprojection errors and dynamically mitigate the influence of feature mismatch outliers.
-*   **Dynamic Map Expansion:** When new feature matches are found between consecutive frames that do not exist in the 3D map, they are triangulated using DLT and refined, continuously building out the 3D mapping path.
-*   **Trajectory & Pose Evaluation:** Evaluates absolute trajectory drift (RMSE) and relative pose consistency (scale ratio) compared to ground truth camera trajectories derived from robot odometry:
-    $$\mathbf{T}_{cam}^0 = (\mathbf{T}_C^R)^{-1} (\mathbf{T}_{robot}^0)^{-1} \mathbf{T}_{robot}^k \mathbf{T}_C^R$$
+- **Midpoint triangulation:** closed-form intersection of two camera rays, used as the initial guess.
+- **Gauss-Newton refinement:** minimizes 2D reprojection error w.r.t. the 3D point position using analytically derived Jacobians.
+- **Evaluation:** landmarks are scaled back to metric using the baseline ratio, then compared against ground truth from `world.dat` transformed into the Camera 0 frame:
+  $$\mathbf{X}_{gt}^{cam_0} = (\mathbf{T}_C^R)^{-1} (\mathbf{T}_0^{robot})^{-1} \mathbf{X}_{gt}^{world}$$
 
+---
 
+## Phase 3: Tracking & Sequence Evaluation
 
+Frame-to-frame tracking over the full sequence using PnP pose estimation and incremental map expansion.
+
+- **PnP pose estimation:** for each new frame, 3D-to-2D correspondences between existing map points and the new frame's observations are used to estimate the camera pose via Gauss-Newton on SE(3).
+- **Outlier handling:** Huber loss inside the optimization to down-weight large reprojection errors.
+- **Map expansion:** feature matches with no existing 3D counterpart are triangulated and added to the map.
+- **Pose evaluation:** per-pair relative rotation error `trace(I - R_err)` and translation ratio `||t_est|| / ||t_gt||` are reported for every consecutive frame pair. The ratio is expected to be consistent across the sequence (scale does not drift). Absolute trajectory RMSE is computed after rescaling estimates to metric using the mean ratio.
+- **Map evaluation:** the final map is rescaled using `1 / mean_ratio` and compared against ground truth landmarks. RMSE is reported over all triangulated landmarks that appear in `world.dat`.
+
+---
+
+## Using a Different Dataset
+
+The pipeline reads data from a directory passed as a command-line argument (defaults to `02-VisualOdometry/data`):
+
+```bash
+./build/vo_main /path/to/your/dataset
+```
+
+After running, two files are written into the dataset directory:
+
+| File | Content |
+|---|---|
+| `estimated_trajectory.dat` | One line per frame: `frame_id x y z` — camera centre in Camera-0 frame, metric scale |
+| `estimated_world.dat` | One line per landmark: `landmark_id x y z` — 3D position in Camera-0 frame, metric scale |
+
+> **Note on coordinate frames:** both output files are expressed in **Camera-0 frame**, not the robot global frame used by the raw GT files. `world.dat` and `trajectory.dat` cannot be compared directly against these outputs — the GT data must first be transformed to Camera-0 frame using `cam_transform` and the first robot pose `T_0`, which is what `main.cpp` does internally for its RMSE computation.

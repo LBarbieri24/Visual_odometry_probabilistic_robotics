@@ -144,25 +144,13 @@ std::vector<Eigen::Matrix4f> Tracker::runVisualOdometry(
     Eigen::Vector3f t1;
     Epipolar::decomposeEssentialMatrix(E, pts0, pts1, R1, t1);
 
-    // 6. Scale translation using Ground Truth comparison (Frame 0 to 1)
-    auto toSE3 = [](const Eigen::Vector3f& pose) {
-        float x = pose.x(), y = pose.y(), theta = pose.z();
-        Eigen::Matrix4f T = Eigen::Matrix4f::Identity();
-        T(0, 0) = std::cos(theta); T(0, 1) = -std::sin(theta);
-        T(1, 0) = std::sin(theta); T(1, 1) = std::cos(theta);
-        T(0, 3) = x;
-        T(1, 3) = y;
-        return T;
-    };
-    Eigen::Matrix4f T0_gt = toSE3(f0.gt_pose);
-    Eigen::Matrix4f T1_gt = toSE3(f1.gt_pose);
-    Eigen::Matrix4f rel_GT_robot = T0_gt.inverse() * T1_gt;
-    Eigen::Matrix4f rel_GT = cam.cam_transform.inverse() * rel_GT_robot * cam.cam_transform;
+    // 6. Initialize using unit-norm translation (relative scale)
+    Eigen::Vector3f t1_scaled = t1.normalized();
 
-    float t_est_norm = t1.norm();
-    float t_gt_norm = rel_GT.block<3, 1>(0, 3).norm();
-    float scale_factor = t_gt_norm / t_est_norm;
-    Eigen::Vector3f t1_scaled = scale_factor * t1;
+    // Anchor observation: one reference view per landmark, used for re-refinement.
+    // We use the Frame-0 observation (R=I, t=0) as the anchor since it has
+    // the most accurate pose (GT-calibrated scale, no accumulated drift).
+    std::unordered_map<int, vo::Observation> anchor_obs;
 
     // 7. Triangulate initial landmarks (in Camera 0 frame)
     for (int idx : inliers) {
@@ -179,11 +167,10 @@ std::vector<Eigen::Matrix4f> Tracker::runVisualOdometry(
         obs1.t = t1_scaled;
         obs1.uv = f1.points[m.train_idx].uv;
 
-        std::vector<vo::Observation> obs = {obs0, obs1};
-        Eigen::Vector3f X_dlt = vo::Triangulation::triangulateDLT(obs, cam.K);
-        Eigen::Vector3f X_refined = vo::Triangulation::refineGaussNewton(X_dlt, obs, cam.K);
+        Eigen::Vector3f X_refined = vo::Triangulation::triangulateGaussNewtonOnly({obs0, obs1}, cam.K);
 
         map_points[landmark_id] = X_refined;
+        anchor_obs[landmark_id] = obs0; // store Frame-0 view as anchor
     }
 
     // Save initial poses
@@ -231,26 +218,43 @@ std::vector<Eigen::Matrix4f> Tracker::runVisualOdometry(
             T_k.block<3, 1>(0, 3) = t;
             estimated_poses.push_back(T_k);
 
-            // Map expansion: triangulate new landmarks that are not in the map
             int new_points_count = 0;
+            int refined_count = 0;
             for (const auto& m : matches_k) {
                 int landmark_id = f_prev.points[m.query_idx].actual_id;
-                if (map_points.find(landmark_id) == map_points.end()) {
+
+                if (map_points.find(landmark_id) != map_points.end()) {
+                    // --- Re-refinement of existing map points on re-observation ---
+                    // Build a new observation from the current (just-estimated) pose.
+                    // Then re-run Gauss-Newton using anchor_obs + new_obs so that
+                    // the extra view pulls the 3D position toward a better estimate.
+                    if (anchor_obs.find(landmark_id) != anchor_obs.end()) {
+                        vo::Observation obs_new;
+                        obs_new.R   = R;
+                        obs_new.t   = t;
+                        obs_new.uv  = f_curr.points[m.train_idx].uv;
+
+                        std::vector<vo::Observation> obs_ref = { anchor_obs[landmark_id], obs_new };
+                        map_points[landmark_id] = vo::Triangulation::refineGaussNewton(
+                            map_points[landmark_id], obs_ref, cam.K);
+                        refined_count++;
+                    }
+                } else {
+                    // --- Map expansion: triangulate new landmarks ---
                     vo::Observation obs_prev;
-                    obs_prev.R = R_prev;
-                    obs_prev.t = t_prev;
+                    obs_prev.R  = R_prev;
+                    obs_prev.t  = t_prev;
                     obs_prev.uv = f_prev.points[m.query_idx].uv;
 
                     vo::Observation obs_curr;
-                    obs_curr.R = R;
-                    obs_curr.t = t;
+                    obs_curr.R  = R;
+                    obs_curr.t  = t;
                     obs_curr.uv = f_curr.points[m.train_idx].uv;
 
-                    std::vector<vo::Observation> obs = {obs_prev, obs_curr};
-                    Eigen::Vector3f X_dlt = vo::Triangulation::triangulateDLT(obs, cam.K);
-                    Eigen::Vector3f X_refined = vo::Triangulation::refineGaussNewton(X_dlt, obs, cam.K);
+                    Eigen::Vector3f X_refined = vo::Triangulation::triangulateGaussNewtonOnly({obs_prev, obs_curr}, cam.K);
 
-                    map_points[landmark_id] = X_refined;
+                    map_points[landmark_id]  = X_refined;
+                    anchor_obs[landmark_id]  = obs_prev; // store first observation as anchor
                     new_points_count++;
                 }
             }

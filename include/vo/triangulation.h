@@ -14,10 +14,6 @@ struct Observation {
 
 class Triangulation {
 public:
-    // Performs Linear Direct Linear Transform (DLT) triangulation
-    static Eigen::Vector3f triangulateDLT(
-        const std::vector<Observation>& obs,
-        const Eigen::Matrix3f& K);
 
     // Refines a 3D point using Gauss-Newton non-linear least squares
     // Minimizes the sum of squared reprojection errors in pixel space
@@ -27,6 +23,17 @@ public:
         const Eigen::Matrix3f& K,
         int max_iterations = 10,
         float tolerance = 1e-5f);
+
+    // Triangulates a 3D point using pure Gauss-Newton non-linear least squares,
+    // initializing the point using Grisetti's midpoint line triangulation method.
+    static Eigen::Vector3f triangulateGaussNewtonOnly(
+        const std::vector<Observation>& obs,
+        const Eigen::Matrix3f& K);
+
+    // Performs closed-form midpoint line triangulation between two visual rays
+    static Eigen::Vector3f triangulateMidpoint(
+        const std::vector<Observation>& obs,
+        const Eigen::Matrix3f& K);
 };
 
 } // namespace vo
