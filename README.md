@@ -49,6 +49,31 @@ Frame-to-frame tracking over the full sequence using PnP pose estimation and inc
 
 ---
 
+## Results
+
+Evaluated on the provided 121-frame dataset (`02-VisualOdometry/data`).
+
+### Pose evaluation
+
+| Metric | Value |
+|---|---|
+| Absolute Trajectory RMSE | 1.368e-03 m |
+| Relative Rotation RMSE | 2.076e-07 |
+| Mean scale ratio `‖t_est‖ / ‖t_gt‖` | 4.988 ± 0.004 |
+
+The scale ratio is consistent across all 121 frames (std dev < 0.1%), confirming no scale drift in the tracking.
+
+### Map evaluation
+
+| Metric | Value |
+|---|---|
+| Landmarks triangulated | 490 / 1000 |
+| Landmark position RMSE | 2.786e-03 m |
+
+Scale applied for map evaluation: `1 / 4.988 ≈ 0.2005` (GT/EST ratio, to convert to metric).
+
+---
+
 ## Using a Different Dataset
 
 The pipeline reads data from a directory passed as a command-line argument (defaults to `02-VisualOdometry/data`):
